@@ -162,10 +162,21 @@ A 215-digit composite is ~714 bits. You need a build with `BITWIDTH=768`.
 
 ### 1. Rebuild
 
+At 768-bit, the default `BATCH_JOB_SIZE=32768` will exceed 16 GB VRAM and crash
+the driver. You must reduce it. Tested values on an RX 9070 XT (16 GB):
+
+| BATCH_JOB_SIZE | VRAM usage | Throughput (B1=50k) |
+|----------------|------------|---------------------|
+| 128            | ~1.7 GB    | 5 c/s               |
+| 512            | ~6.8 GB    | 19 c/s              |
+| 1024+          | 14+ GB     | driver crash         |
+
+512 is the recommended value for 16 GB cards at BITWIDTH=768:
+
 ```
 cd /path/to/source/build
 rm -rf *
-BITWIDTH=768 cmake ..
+BITWIDTH=768 BATCH_JOB_SIZE=512 cmake ..
 make -j2 cuda-ecm
 ```
 
@@ -192,8 +203,9 @@ input = /path/to/input215.txt
 output = /path/to/output215.txt
 
 [cuda]
-streams = 2
-threads_per_block = auto
+streams = 1
+threads_per_block = 64
+use_const_memory = false
 
 [ecm]
 ; ECM is best at finding "small" factors relative to the input.
