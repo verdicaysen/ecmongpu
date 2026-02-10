@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 
 #include "mp/mp_montgomery.h"
 #include "mp/mp.h"

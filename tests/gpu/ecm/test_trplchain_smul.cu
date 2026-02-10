@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include <stdlib.h>
 #include <libgen.h>
 #include <time.h>
@@ -38,11 +39,11 @@ int test() {
 
 	batch_job *batch = (batch_job *) malloc(sizeof(batch_job));
 	batch_job *dev_batch;
-	CUDA_SAFE_CALL(cudaMalloc(&dev_batch, sizeof(batch_job)));
+	CUDA_SAFE_CALL(hipMalloc(&dev_batch, sizeof(batch_job)));
 
 	batch_job_naf *batch_naf = (batch_job_naf *) malloc(sizeof(batch_job_naf));
 	batch_job_naf *dev_batch_naf;
-	CUDA_SAFE_CALL(cudaMalloc(&dev_batch_naf, sizeof(batch_job_naf)));
+	CUDA_SAFE_CALL(hipMalloc(&dev_batch_naf, sizeof(batch_job_naf)));
 
 	point_gkl2016 phelper;
   pthread_mutex_init(&phelper.mutex, NULL);
@@ -119,7 +120,7 @@ int test() {
   }
 
 	naf_t scalar_naf_dev;
-	CUDA_SAFE_CALL(cudaMalloc((void **) &scalar_naf_dev, scalar_naf_digits * sizeof(int8_t)));
+	CUDA_SAFE_CALL(hipMalloc((void **) &scalar_naf_dev, scalar_naf_digits * sizeof(int8_t)));
 
 #ifdef DEBUG
 	gmp_printf("NAF scalar: %Zi\n", gmp_scalar);
@@ -128,10 +129,10 @@ int test() {
 	print_naf(h_scalar_naf, scalar_naf_digits);
 #endif
 
-	CUDA_SAFE_CALL(cudaMemcpy(scalar_naf_dev,
+	CUDA_SAFE_CALL(hipMemcpy(scalar_naf_dev,
 							  h_scalar_naf,
 							  scalar_naf_digits * sizeof(uint8_t),
-							  cudaMemcpyHostToDevice));
+							  hipMemcpyHostToDevice));
 
 
 #ifdef DEBUG
@@ -143,10 +144,10 @@ int test() {
 #endif
 
 	/* Compute NAF version */
-	CUDA_SAFE_CALL(cudaMemcpy(dev_batch_naf, batch_naf, sizeof(batch_job_naf), cudaMemcpyHostToDevice));
+	CUDA_SAFE_CALL(hipMemcpy(dev_batch_naf, batch_naf, sizeof(batch_job_naf), hipMemcpyHostToDevice));
   	printf("shared mem: %zu\n", sizeof(shared_mem_cache)*(BLOCK_SIZE));
-	cuda_tw_ed_smul_naf_batch << < BATCH_JOB_SIZE / BLOCK_SIZE, BLOCK_SIZE, (sizeof(shared_mem_cache))*(BLOCK_SIZE)  >> > (&dev_batch_naf->job, scalar_naf_dev, scalar_naf_digits);
-	CUDA_SAFE_CALL(cudaMemcpy(batch_naf, dev_batch_naf, sizeof(batch_job_naf), cudaMemcpyDeviceToHost));
+	cuda_tw_ed_smul_naf_batch <<< BATCH_JOB_SIZE / BLOCK_SIZE, BLOCK_SIZE, (sizeof(shared_mem_cache))*(BLOCK_SIZE)  >>> (&dev_batch_naf->job, scalar_naf_dev, scalar_naf_digits);
+	CUDA_SAFE_CALL(hipMemcpy(batch_naf, dev_batch_naf, sizeof(batch_job_naf), hipMemcpyDeviceToHost));
 
 #ifdef DEBUG
   for(int p = 1; p <= NAF_MAX_PRECOMPUTED; p+=2){
@@ -166,13 +167,13 @@ int test() {
 	mp_p h_scalar = (mp_limb *) malloc(scalar_limbs * sizeof(mp_limb));
 	mpz_to_mp_limbs(h_scalar, gmp_scalar, scalar_limbs);
 	mp_p scalar_dev;
-	CUDA_SAFE_CALL(cudaMalloc((void **) &scalar_dev, scalar_limbs * sizeof(mp_limb)));
+	CUDA_SAFE_CALL(hipMalloc((void **) &scalar_dev, scalar_limbs * sizeof(mp_limb)));
 	mp_copy_to_dev_limbs(scalar_dev, h_scalar, scalar_limbs);
 
 	/* Compute Dbl&Add version */
-	CUDA_SAFE_CALL(cudaMemcpy(dev_batch, batch, sizeof(batch_job), cudaMemcpyHostToDevice));
-	cuda_tw_ed_smul_batch << < BATCH_JOB_SIZE / BLOCK_SIZE, BLOCK_SIZE >> > (dev_batch, scalar_dev, scalar_bitlength);
-	CUDA_SAFE_CALL(cudaMemcpy(batch, dev_batch, sizeof(batch_job), cudaMemcpyDeviceToHost));
+	CUDA_SAFE_CALL(hipMemcpy(dev_batch, batch, sizeof(batch_job), hipMemcpyHostToDevice));
+	cuda_tw_ed_smul_batch <<< BATCH_JOB_SIZE / BLOCK_SIZE, BLOCK_SIZE >>> (dev_batch, scalar_dev, scalar_bitlength);
+	CUDA_SAFE_CALL(hipMemcpy(batch, dev_batch, sizeof(batch_job), hipMemcpyDeviceToHost));
 
 #ifdef DEBUG
   LOG_WARNING("Point reg (after)")

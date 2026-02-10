@@ -1,130 +1,245 @@
-# co-ecm
+# co-ecm (HIP)
 
-This software uses one or mutliple Nvidia GPU to factor numbers via Lenstra's
-Elliptic Curve Method (ECM).
+This is an AMD HIP port of co-ecm, a GPU-accelerated implementation of
+Lenstra's Elliptic Curve Method (ECM) for integer factorization.
 
 It operates on "a = -1" twisted Edwards curves with extended projective
-coordinates, uses w-NAF point multiplication during stage one of the ECM
-algorithm and a baby-step/giant-step approach during stage two. For the first
-stage the software also supports custom precomputed addition chains. See the
-paper below for more information.
+coordinates, uses w-NAF point multiplication during stage one and a
+baby-step/giant-step approach during stage two.
 
-All arithmetic is achieved with a custom fixed bitlength multi-precision
-arithmetic implementation. All GPU multi-precision operations are performed in
-Montgomery arithmetic.
-
-Stage one and two of the ECM are executed entirely (with exception of GCD
-computation) on the GPU, including precomputation (for NAF based scalar
-multiplication).
+All GPU multi-precision operations are performed in Montgomery arithmetic
+using a custom fixed-bitlength implementation. Stages one and two execute
+entirely on the GPU (GCD computation excluded).
 
 
-# Paper 
-More details about the software and evaluation results are published in 
+## HIP Port
+
+Ported to AMD GPUs (HIP/ROCm) by Verdic Aysen.
+
+
+# Paper
 
 > *Jonas Wloka, Jan Richter-Brockmann, Colin Stahlke, Thorsten Kleinjung,
 > Christine Priplata, Tim Güneysu*:
 > **Revisiting ECM on GPUs**.
 > 19th International Conference on Cryptology and Network Security (CANS 2020),
-> December 14-16, 2020, 
+> December 14-16, 2020
 
 
 ## Building
 
 ### Dependencies
 
-Install the following dependencies before compiling this software
-
- - For most host-side computations, the [GNU Multi Precision Arithmetic
-   Library](https://gmplib.org/) is used. 
- - [OpenMP](https://www.openmp.org/) is (scarcely as of now) used to
-   parallelize some jobs on the CPU.
- - As this software targets CUDA capable GPUs, CUDA itself needs to be
-   installed, in particular the Nvidia compiler `nvcc` and the [CUDA library in
-   Version 10](https://developer.nvidia.com/cuda-downloads).
- - To run the included benchmarks, `python` is needed with at least version 3
+ - [ROCm](https://rocm.docs.amd.com/) (tested with ROCm 6.x/7.x)
+ - [GMP](https://gmplib.org/) (GNU Multi Precision Arithmetic Library)
+ - CMake >= 3.21
+ - A C/C++ compiler (gcc/g++)
+ - Python 3 (for benchmarks only)
 
 
 ### Compilation
 
-The build system CMake is used. Install CMake for your system. If you are on a
-linux-based system, you will also need GNU make to actually build the software,
-as well as a current C compiler.
+`BITWIDTH` is the most important build parameter. It must be **at least 32
+bits larger** than the numbers you want to factor. It must be a multiple of 32.
+Higher values use more GPU registers per thread, which reduces occupancy and
+throughput.
 
-See the top of the `CMakeLists.txt` for build time configuration options.
+| Input size         | Bits needed | BITWIDTH to set |
+|--------------------|-------------|-----------------|
+| 58 digits (192-bit)| ~192        | 224 (default)   |
+| 100 digits         | ~333        | 384             |
+| 150 digits         | ~498        | 544             |
+| 215 digits         | ~714        | 768             |
 
- * `BITWIDTH` gives the maximum bits any input number can have. The higher this
-   value, the slower all arithmetic runs.
- * The option `BATCH_JOB_SIZE` determines the number of curves in one batch
-   processing.
+Other build-time options (set via environment variables before running cmake):
 
+| Variable         | Default | Description                              |
+|------------------|---------|------------------------------------------|
+| `BITWIDTH`       | 192     | Max input bit size (must be multiple of 32, at least 32 more than input) |
+| `BATCH_JOB_SIZE` | 32768   | Curves per GPU batch. Reduce if you hit OOM at large BITWIDTH |
+| `WINDOW_SIZE`    | 4       | w-NAF window size for point multiplication |
+| `MON_PROD`       | FIPS    | Montgomery product algorithm (CIOS, FIPS, FIOS, CIOS_XMAD) |
+| `GPU_ARCH`       | auto    | GPU architecture target (e.g. gfx1201 for RX 9070 XT) |
 
-To compile the software, create a build folder and change into it 
-
-```
-$ mkdir build 
-$ cd build 
-``` 
-
-execute CMake with the path to this source directory to generate Makefiles 
-
-``` 
-$ cmake /path/to/source 
-```
-Finally call `make` to build
-the binaries:
+Build for a 215-digit number:
 
 ```
-$ make cuda-ecm
+cd /path/to/source
+mkdir build && cd build
+BITWIDTH=768 cmake ..
+make -j2 cuda-ecm
 ```
 
-### Testing to be sure all multi precision and elliptic curve arithmetic works
-correctly on your system, make can generate and execute a test suite after
-CMake setup via 
+Use `-j2` instead of full parallelism to avoid running out of RAM during
+compilation (each target recompiles the full GPU codebase).
+
+### Testing
 
 ```
-$ make all test
- ```
-
-### Running integrated benchmarks
-Two sample benchmarks can be run with
-
-```
-$ make bench
+make -j2 all
+ctest
 ```
 
+### GPU architecture auto-detection
+
+The build system runs `rocminfo` to detect your GPU. If that fails, it
+defaults to `gfx1201`. Override with:
+
+```
+GPU_ARCH=gfx1100 BITWIDTH=768 cmake ..
+```
 
 
 ## Usage
 
 ```
-Usage: ecm -c config.ini 
+./bin/cuda-ecm -c config.ini
+```
 
-    -c 	configuration file
- ```
+### Command-line options
+
+| Flag                | Description                       |
+|---------------------|-----------------------------------|
+| `-c, --config FILE` | Config file (required)            |
+| `--b1 N`            | Override stage 1 bound            |
+| `--b2 N`            | Override stage 2 bound            |
+| `-e, --effort N`    | Override effort (curves per number)|
+| `-f, --file`        | Force file input mode             |
+| `-l, --listen`      | Force server input mode           |
+| `-p, --port N`      | Port for server mode              |
+| `-s, --silent`      | Suppress all but fatal output     |
+| `--log N`           | Log level (1=verbose .. 7=none)   |
 
 ### Configuration file
 
-An example configuration file is provided in the
-`example` directory as `config.ini`.  All configuration options, as well as
-their default values are described in this file.
+All options go in an INI-format config file. See `example/config.ini` for a
+fully commented example. The key sections:
+
+**[general]**
+- `mode` - `file` or `server`
+- `loglevel` - 1 (verbose) through 7 (none), default 3 (info)
+- `random` - `true`/`false` for RNG seed
+
+**[file]**
+- `input` - path to input file
+- `output` - path to output file
+
+**[cuda]** (name kept for compatibility)
+- `streams` - concurrent GPU streams (default: 2)
+- `threads_per_block` - threads per block, or `auto` (default: auto)
+
+**[ecm]**
+- `b1` - stage 1 smoothness bound
+- `b2` - stage 2 smoothness bound
+- `effort` - max curves per input number
+- `curve_gen` - curve generation method: 0=Naive, 1=GKL2016_j1, 2=GKL2016_j4
+- `powersmooth` - `true` for lcm(2..b1), `false` for primorial
+- `find_all_factors` - `true` to keep going after first factor
+- `stage2.enabled` - `true`/`false`
+- `stage2.window_size` - baby-step/giant-step window (default: 2310)
 
 
+### Input file format
 
-## Example usage 
-
-The following snippet builds the `cuda-ecm` binary and tries
-to factor a small number of provided 192-bit numbers with a 48-bit and 144-bit
-factor in file `example/input.txt`. For a more challenging approach change the 
-input file to `example/input2.txt`, a file with 32768 numbers of 100-bit and
-91-bit factors.
+One number per line: `<id> <number>`
 
 ```
+1 12345678901234567890123456789012345678901234567890
+```
 
-$ cd /path/to/source 
-$ mkdir build 
-$ cd build 
-$ cmake ..
-$ make cuda-ecm
-$ ./bin/cuda-ecm -c ../example/config.ini
+Lines not starting with a digit are ignored (comments).
+
+### Output format
 
 ```
+<id> <factor1>,<factor2>, # effort: <curves_used>
+```
+
+
+## Factoring a 215-digit number
+
+A 215-digit composite is ~714 bits. You need a build with `BITWIDTH=768`.
+
+### 1. Rebuild
+
+```
+cd /path/to/source/build
+rm -rf *
+BITWIDTH=768 cmake ..
+make -j2 cuda-ecm
+```
+
+### 2. Create your input file
+
+Create a file (e.g. `input215.txt`) with your number:
+
+```
+1 <your 215-digit number here>
+```
+
+### 3. Create a config file
+
+Create `config215.ini`:
+
+```ini
+[general]
+mode = file
+loglevel = 3
+random = true
+
+[file]
+input = /path/to/input215.txt
+output = /path/to/output215.txt
+
+[cuda]
+streams = 2
+threads_per_block = auto
+
+[ecm]
+; ECM is best at finding "small" factors relative to the input.
+; It does NOT brute-force all 215 digits — it finds a factor of
+; D digits with probability that increases with effort and B1/B2.
+;
+; Recommended B1/B2 by factor size you're hoping to find:
+;   ~25 digits:  b1 = 50000,       b2 = 5000000
+;   ~30 digits:  b1 = 250000,      b2 = 25000000
+;   ~35 digits:  b1 = 1000000,     b2 = 100000000
+;   ~40 digits:  b1 = 3000000,     b2 = 300000000
+;   ~45 digits:  b1 = 11000000,    b2 = 1100000000
+;   ~50 digits:  b1 = 43000000,    b2 = 4300000000
+;   ~55 digits:  b1 = 110000000,   b2 = 11000000000
+;   ~60 digits:  b1 = 260000000,   b2 = 26000000000
+;
+; Start with smaller bounds and increase if no factor is found.
+; Each B1 level needs roughly 2-3x more curves than the previous.
+
+b1 = 50000
+b2 = 5000000
+effort = 5000
+curve_gen = 2
+powersmooth = true
+find_all_factors = false
+stage2.enabled = true
+stage2.window_size = 2310
+```
+
+### 4. Run
+
+```
+./bin/cuda-ecm -c config215.ini
+```
+
+### 5. Strategy
+
+ECM finds small factors efficiently. It does not crack the full 215-digit
+semiprime directly — it searches for a factor of a given size. The approach:
+
+1. Start with `b1=50000` and `effort=5000`. This quickly searches for factors
+   up to ~25 digits.
+2. If nothing is found, increase to `b1=250000, b2=25000000, effort=3000`.
+3. Keep doubling B1 and effort, working your way up the table above.
+4. If the composite has no factor below ~60 digits, ECM is the wrong tool
+   and you would need GNFS/SNFS instead.
+
+The program reports throughput as curves/second. At larger BITWIDTH the
+throughput drops significantly because each curve uses more GPU registers.

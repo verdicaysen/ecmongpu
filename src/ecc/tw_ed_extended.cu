@@ -1,5 +1,6 @@
-#include <cuda.h>
-#include <cuda_runtime.h>
+#include "hip/hip_runtime.h"
+#include <hip/hip_runtime.h>
+#include <hip/hip_runtime.h>
 #include "ecc/twisted_edwards.h"
 //#include "ecm/factor_task.h"
 #include "mp/mp.h"
@@ -174,6 +175,7 @@ int tw_ed_triple(point_tw_ed *r, const point_tw_ed *op, const curve_tw_ed *curve
 
 
 
+__host__ __device__
 void tw_ed_point_invert(point_tw_ed *p, const mon_info *info) {
 	mp_sub(p->x, info->n, p->x);
 	mp_sub(p->t, info->n, p->t);
@@ -405,6 +407,7 @@ void tw_ed_to_reg(point_tw_ed *p, const mon_info *info) {
 }
 
 
+__host__ __device__
 bool tw_ed_scale_point(point_tw_ed *r, const point_tw_ed *p, const mon_info *info) {
 	mp_t zinv;
 	mon_inv(zinv, p->z, info);
@@ -852,6 +855,7 @@ void tw_ed_random_curve_gkl2016_j4(point_tw_ed *p1, curve_tw_ed *curve, mon_info
 
 }
 
+__host__ __device__
 void tw_ed_point_set_id(point_tw_ed *p) {
 	mp_set_ui(p->x, 0);
 	mp_set_ui(p->y, 1);
@@ -860,12 +864,13 @@ void tw_ed_point_set_id(point_tw_ed *p) {
 }
 
 #ifdef OPTIMIZE_PRECOMP
+__host__ __device__
 void tw_ed_point_invert_precomp(point_tw_ed *p, const mon_info *info) {
 	mp_switch(p->y, p->x);
 	mp_sub(p->t, info->n, p->t);
 }
-#else 
-__inline__
+#else
+__host__ __device__ __inline__
 void tw_ed_point_invert_precomp(point_tw_ed *p, const mon_info *info) {
 	tw_ed_point_invert(p, info);
 }

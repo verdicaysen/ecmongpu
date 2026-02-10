@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <errno.h>

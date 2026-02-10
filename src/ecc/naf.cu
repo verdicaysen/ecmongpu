@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include "ecc/naf.h"
 #include "log.h"
 
@@ -13,7 +14,7 @@ int to_naf(naf_t naf, size_t digits, mpz_t s, int w) {
 
 	int twow = 1 << w;
 	size_t i = 0;
-	uint8_t naf_tmp[digits];
+	uint8_t *naf_tmp = (uint8_t *)alloca(digits * sizeof(uint8_t));
 
 	/* Limb by limb version, avoids many shifts on large mys */
 	/* Works on per_loop_shift bits at a time */

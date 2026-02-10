@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <stdarg.h>

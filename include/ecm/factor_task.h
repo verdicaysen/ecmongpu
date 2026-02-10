@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /*
 	co-ecm
 	Copyright (C) 2018  Jonas Wloka
@@ -22,8 +23,8 @@
 typedef struct _factor_task *factor_task;
 
 #include <gmp.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
+#include <hip/hip_runtime.h>
 #include <stdbool.h>
 #include <pthread.h>
 

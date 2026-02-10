@@ -1,8 +1,9 @@
-#include <cuda_runtime.h>
+#include "hip/hip_runtime.h"
+#include <hip/hip_runtime.h>
 #include "mp/mp_montgomery.h"
 #include "mp/mp.h"
 #include "mp/gmp_conversion.h"
-#include "cuda.h"
+#include "hip/hip_runtime.h"
 #include "build_config.h"
 #include "log.h"
 
@@ -15,8 +16,8 @@ extern "C" {
 __host__
 mon_info *mon_info_copy_to_dev(mon_info *host_info) {
 	mon_info *dev_info;
-	cudaMalloc((void **) &dev_info, sizeof(mon_info));
-	cudaMemcpy(dev_info, host_info, sizeof(mon_info), cudaMemcpyHostToDevice);
+	hipMalloc((void **) &dev_info, sizeof(mon_info));
+	hipMemcpy(dev_info, host_info, sizeof(mon_info), hipMemcpyHostToDevice);
 
 	return dev_info;
 }
@@ -76,6 +77,7 @@ int to_mon(mp_t r, const mp_t a, const mon_info *info) {
 	return mon_prod(r, a, info->R2, info);
 }
 
+__host__ __device__
 int from_mon(mp_t r, const mp_t a, const mon_info *info) {
 	mp_t one;
 	mp_set_ui(one, 1);
@@ -85,7 +87,7 @@ int from_mon(mp_t r, const mp_t a, const mon_info *info) {
 __device__ __host__
 void mp_div2(mp_t a) {
 	for (size_t i = 0; i < LIMBS - 1; i++) {
-#if defined(__CUDA_ARCH__) && (LIMB_BITS == 32)
+#if defined(__HIP_DEVICE_COMPILE__) && (LIMB_BITS == 32)
 		__shf_r_clamp(a[i], a[i], a[i+1], 1);
 #else
 		a[i] = (a[i + 1] << (LIMB_BITS - 1)) | (a[i] >> 1);
@@ -97,7 +99,7 @@ void mp_div2(mp_t a) {
 __device__ __host__
 void mp_shiftl(mp_t a, uint32_t bits, size_t limbs) {
 	for (size_t i = limbs - 1; i > 0; i--) {
-#if defined(__CUDA_ARCH__) && (LIMB_BITS == 32)
+#if defined(__HIP_DEVICE_COMPILE__) && (LIMB_BITS == 32)
 		__shf_l_clamp(a[i], a[i-1], a[i], bits);
 #else
 		a[i] = (a[i] << bits) | (a[i - 1] >> (LIMB_BITS - bits));
@@ -207,7 +209,8 @@ int mon_prod_cios_cpu(mp_t r, const mp_t a, const mp_t b, const mon_info *info) 
 #ifdef MON_PROD_CIOS
 __device__ __host__
 int mon_prod_distinct(mp_t r, const mp_t a, const mp_t b, const mon_info *info) {
-#ifdef __CUDA_ARCH__
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0;
 	mp_limb r1 = 0, r2 = 0;
 
 #pragma unroll
@@ -268,8 +271,8 @@ int mon_prod_distinct(mp_t r, const mp_t a, const mp_t b, const mon_info *info) 
 
 __device__ __host__
 int mon_square(mp_t r, const mp_t a, const mon_info *info) {
-#ifdef __CUDA_ARCH__
-
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0;
 	mp_limb res[LIMBS + 2];
 
 #pragma unroll
@@ -360,7 +363,8 @@ int mon_square(mp_t r, const mp_t a, const mon_info *info) {
 
 __device__ __host__
 int mon_prod(mp_t r, const mp_t a, const mp_t b, const mon_info *info) {
-#ifdef __CUDA_ARCH__
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0;
 	mp_limb res[LIMBS + 2];
 
 #pragma unroll
@@ -443,7 +447,8 @@ int mon_prod_distinct(mp_t r, const mp_t a, const mp_t b, const mon_info *info) 
 
 __device__ __host__
 int mon_prod(mp_t r, const mp_t a, const mp_t b, const mon_info *info) {
-#ifdef __CUDA_ARCH__
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0;
 	mp_limb res[LIMBS + 2];
 #pragma unroll
 	for (int i = 0; i < LIMBS + 2; i++){
@@ -527,7 +532,8 @@ int mon_prod_distinct(mp_t r, const mp_t a, const mp_t b, const mon_info *info) 
 
 __device__ __host__
 int mon_prod(mp_t r, const mp_t a, const mp_t b, const mon_info *info) {
-#ifdef __CUDA_ARCH__
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0;
 	mp_limb res[LIMBS + 2];
 #pragma unroll
 	for (int i = 0; i < LIMBS + 2; i++){
@@ -596,85 +602,83 @@ int mon_square(mp_t r, const mp_t a, const mon_info *info) {
 
 
 
-#define xmadll_cc(r, a, b, c)                                    \
-	asm volatile ("{ 																	       \n\t"         \
-								".reg .u16			%alo, %ahi, %blo, %bhi;    \n\t"  \
-								".reg .u32			%t;                        \n\t"  \
-								"mov.b32				{%alo, %ahi}, %1;					 \n\t"  \
-								"mov.b32				{%blo, %bhi}, %2;					 \n\t"  \
-								"mul.wide.u16		%t, %alo, %blo;						 \n\t"  \
-								"add.cc.u32		%0, %3, %t;								   \n\t"  \
-								"}"	: "=r"(r) : "r" (a), "r" (b), "r" (c));
-#define xmadll_c_cc(r, a, b, c)                                    \
-	asm volatile ("{ 																	       \n\t"         \
-								".reg .u16			%alo, %ahi, %blo, %bhi;    \n\t"  \
-								".reg .u32			%t;                        \n\t"  \
-								"mov.b32				{%alo, %ahi}, %1;					 \n\t"  \
-								"mov.b32				{%blo, %bhi}, %2;					 \n\t"  \
-								"mul.wide.u16		%t, %alo, %blo;						 \n\t"  \
-								"addc.cc.u32		%0, %3, %t;								 \n\t"  \
-								"}"	: "=r"(r) : "r" (a), "r" (b), "r" (c));
+/*
+ * Portable XMAD (16-bit partial product) macros.
+ * These replace NVIDIA PTX xmad instructions with C equivalents.
+ * Each computes: r = (partial_16x16_product of a,b) + c, with carry chain.
+ *
+ * ll = low16(a) * low16(b)
+ * hl = high16(a) * low16(b)
+ * lh = low16(a) * high16(b)
+ * hh = high16(a) * high16(b)
+ *
+ * _cc suffix = sets carry, _c_ prefix = consumes carry
+ */
 
-#define xmadhl_cc(r, a, b, c)                                    \
-	asm volatile ("{ 																	       \n\t"         \
-								".reg .u16			%alo, %ahi, %blo, %bhi;    \n\t"  \
-								".reg .u32			%t;                        \n\t"  \
-								"mov.b32				{%alo, %ahi}, %1;					 \n\t"  \
-								"mov.b32				{%blo, %bhi}, %2;					 \n\t"  \
-								"mul.wide.u16		%t, %ahi, %blo;						 \n\t"  \
-								"add.cc.u32		%0, %3, %t;								   \n\t"  \
-								"}"	: "=r"(r) : "r" (a), "r" (b), "r" (c));
-#define xmadhl_c_cc(r, a, b, c)                                    \
-	asm volatile ("{ 																	       \n\t"   \
-								".reg .u16			%alo, %ahi, %blo, %bhi;    \n\t"  \
-								".reg .u32			%t;                        \n\t"  \
-								"mov.b32				{%alo, %ahi}, %1;					 \n\t"  \
-								"mov.b32				{%blo, %bhi}, %2;					 \n\t"  \
-								"mul.wide.u16		%t, %ahi, %blo;						 \n\t"  \
-								"addc.cc.u32		%0, %3, %t;								 \n\t"  \
-								"}"	: "=r"(r) : "r" (a), "r" (b), "r" (c));
+/* xmadll: low16(a) * low16(b) + c */
+#define xmadll_cc(r, a, b, c) do { \
+	uint32_t __t = (uint32_t)((uint16_t)(a)) * (uint32_t)((uint16_t)(b)); \
+	uint64_t __s = (uint64_t)__t + (uint64_t)(uint32_t)(c); \
+	(r) = (uint32_t)__s; \
+	__carry_flag = (uint32_t)(__s >> 32); \
+} while(0)
 
-#define xmadlh_cc(r, a, b, c)                                    \
-	asm volatile ("{ 																	       \n\t"         \
-								".reg .u16			%alo, %ahi, %blo, %bhi;    \n\t"  \
-								".reg .u32			%t;                        \n\t"  \
-								"mov.b32				{%alo, %ahi}, %1;					 \n\t"  \
-								"mov.b32				{%blo, %bhi}, %2;					 \n\t"  \
-								"mul.wide.u16		%t, %alo, %bhi;						 \n\t"  \
-								"add.cc.u32		%0, %3, %t;								   \n\t"  \
-								"}"	: "=r"(r) : "r" (a), "r" (b), "r" (c));
-#define xmadlh_c_cc(r, a, b, c)                                    \
-	asm volatile ("{ 																	       \n\t"         \
-								".reg .u16			%alo, %ahi, %blo, %bhi;    \n\t"  \
-								".reg .u32			%t;                        \n\t"  \
-								"mov.b32				{%alo, %ahi}, %1;					 \n\t"  \
-								"mov.b32				{%blo, %bhi}, %2;					 \n\t"  \
-								"mul.wide.u16		%t, %alo, %bhi;						 \n\t"  \
-								"addc.cc.u32		%0, %3, %t;								 \n\t"  \
-								"}"	: "=r"(r) : "r" (a), "r" (b), "r" (c));
+#define xmadll_c_cc(r, a, b, c) do { \
+	uint32_t __t = (uint32_t)((uint16_t)(a)) * (uint32_t)((uint16_t)(b)); \
+	uint64_t __s = (uint64_t)__t + (uint64_t)(uint32_t)(c) + (uint64_t)__carry_flag; \
+	(r) = (uint32_t)__s; \
+	__carry_flag = (uint32_t)(__s >> 32); \
+} while(0)
 
-#define xmadhh_cc(r, a, b, c)                                    \
-	asm volatile ("{ 																	       \n\t"         \
-								".reg .u16			%alo, %ahi, %blo, %bhi;    \n\t"  \
-								".reg .u32			%t;                        \n\t"  \
-								"mov.b32				{%alo, %ahi}, %1;					 \n\t"  \
-								"mov.b32				{%blo, %bhi}, %2;					 \n\t"  \
-								"mul.wide.u16		%t, %ahi, %bhi;						 \n\t"  \
-								"add.cc.u32		%0, %3, %t;								   \n\t"  \
-								"}"	: "=r"(r) : "r" (a), "r" (b), "r" (c));
-#define xmadhh_c_cc(r, a, b, c)                                    \
-	asm volatile ("{ 																	       \n\t"         \
-								".reg .u16			%alo, %ahi, %blo, %bhi;    \n\t"  \
-								".reg .u32			%t;                        \n\t"  \
-								"mov.b32				{%alo, %ahi}, %1;					 \n\t"  \
-								"mov.b32				{%blo, %bhi}, %2;					 \n\t"  \
-								"mul.wide.u16		%t, %ahi, %bhi;						 \n\t"  \
-								"addc.cc.u32		%0, %3, %t;								 \n\t"  \
-								"}"	: "=r"(r) : "r" (a), "r" (b), "r" (c));
+/* xmadhl: high16(a) * low16(b) + c */
+#define xmadhl_cc(r, a, b, c) do { \
+	uint32_t __t = (uint32_t)((uint16_t)((uint32_t)(a) >> 16)) * (uint32_t)((uint16_t)(b)); \
+	uint64_t __s = (uint64_t)__t + (uint64_t)(uint32_t)(c); \
+	(r) = (uint32_t)__s; \
+	__carry_flag = (uint32_t)(__s >> 32); \
+} while(0)
+
+#define xmadhl_c_cc(r, a, b, c) do { \
+	uint32_t __t = (uint32_t)((uint16_t)((uint32_t)(a) >> 16)) * (uint32_t)((uint16_t)(b)); \
+	uint64_t __s = (uint64_t)__t + (uint64_t)(uint32_t)(c) + (uint64_t)__carry_flag; \
+	(r) = (uint32_t)__s; \
+	__carry_flag = (uint32_t)(__s >> 32); \
+} while(0)
+
+/* xmadlh: low16(a) * high16(b) + c */
+#define xmadlh_cc(r, a, b, c) do { \
+	uint32_t __t = (uint32_t)((uint16_t)(a)) * (uint32_t)((uint16_t)((uint32_t)(b) >> 16)); \
+	uint64_t __s = (uint64_t)__t + (uint64_t)(uint32_t)(c); \
+	(r) = (uint32_t)__s; \
+	__carry_flag = (uint32_t)(__s >> 32); \
+} while(0)
+
+#define xmadlh_c_cc(r, a, b, c) do { \
+	uint32_t __t = (uint32_t)((uint16_t)(a)) * (uint32_t)((uint16_t)((uint32_t)(b) >> 16)); \
+	uint64_t __s = (uint64_t)__t + (uint64_t)(uint32_t)(c) + (uint64_t)__carry_flag; \
+	(r) = (uint32_t)__s; \
+	__carry_flag = (uint32_t)(__s >> 32); \
+} while(0)
+
+/* xmadhh: high16(a) * high16(b) + c */
+#define xmadhh_cc(r, a, b, c) do { \
+	uint32_t __t = (uint32_t)((uint16_t)((uint32_t)(a) >> 16)) * (uint32_t)((uint16_t)((uint32_t)(b) >> 16)); \
+	uint64_t __s = (uint64_t)__t + (uint64_t)(uint32_t)(c); \
+	(r) = (uint32_t)__s; \
+	__carry_flag = (uint32_t)(__s >> 32); \
+} while(0)
+
+#define xmadhh_c_cc(r, a, b, c) do { \
+	uint32_t __t = (uint32_t)((uint16_t)((uint32_t)(a) >> 16)) * (uint32_t)((uint16_t)((uint32_t)(b) >> 16)); \
+	uint64_t __s = (uint64_t)__t + (uint64_t)(uint32_t)(c) + (uint64_t)__carry_flag; \
+	(r) = (uint32_t)__s; \
+	__carry_flag = (uint32_t)(__s >> 32); \
+} while(0)
 
 __device__ __host__
 int mon_prod(mp_t r, const mp_t a, const mp_t b, const mon_info *info) {
-#ifdef __CUDA_ARCH__
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0;
 	mp_limb res[LIMBS + 2];
 
 #pragma unroll

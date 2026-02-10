@@ -1,13 +1,14 @@
+#include "hip/hip_runtime.h"
 #include <stdlib.h>
 #include <time.h>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 #include <gmp.h>
 
 #include "cudautil.h"
 #include "mp/mp.h"
 #include "log.h"
 #include "mp/mp_montgomery.h"
-#include "cuda.h"
+#include "hip/hip_runtime.h"
 #include "ecm/ecm.h"
 #include "mp/gmp_conversion.h"
 #include "ecc/twisted_edwards.h"
@@ -65,20 +66,20 @@ int test() {
 
 
 		batch_job *dev_batch;
-		cudaMalloc(&dev_batch, sizeof(batch_job));
+		hipMalloc(&dev_batch, sizeof(batch_job));
 
 #ifdef LOG_LEVEL_VERBOSE_ENABLED
 		LOG_VERBOSE("point before:\n");
 		tw_ed_print_point(&batch->job[0].point, &batch->job[0].mon_info);
 #endif
 
-		CUDA_SAFE_CALL(cudaMemcpy(dev_batch, batch, sizeof(batch_job), cudaMemcpyHostToDevice));
+		CUDA_SAFE_CALL(hipMemcpy(dev_batch, batch, sizeof(batch_job), hipMemcpyHostToDevice));
 		for(int i=0; i < 100; i++){
-			cuda_tw_ed_double_batch << < cuda_blocks, cuda_threads_per_block >> > (dev_batch);
+			cuda_tw_ed_double_batch <<< cuda_blocks, cuda_threads_per_block >>> (dev_batch);
 		}
-		CUDA_SAFE_CALL(cudaDeviceSynchronize());
-		CUDA_SAFE_CALL(cudaPeekAtLastError());
-		CUDA_SAFE_CALL(cudaMemcpy(batch2, dev_batch, sizeof(batch_job), cudaMemcpyDeviceToHost));
+		CUDA_SAFE_CALL(hipDeviceSynchronize());
+		CUDA_SAFE_CALL(hipPeekAtLastError());
+		CUDA_SAFE_CALL(hipMemcpy(batch2, dev_batch, sizeof(batch_job), hipMemcpyDeviceToHost));
 
 #ifdef LOG_LEVEL_VERBOSE_ENABLED
 		LOG_VERBOSE("after:\n");

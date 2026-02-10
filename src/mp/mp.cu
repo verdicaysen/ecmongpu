@@ -1,5 +1,6 @@
+#include "hip/hip_runtime.h"
 #include <inttypes.h>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 #include "mp/mp.h"
 
 #ifdef __cplusplus
@@ -36,14 +37,14 @@ void mp_init(mp_t *a) {
 
 __host__
 void mp_dev_init(mp_p *a) {
-	cudaMalloc((void **) a, LIMBS * sizeof(mp_limb));
-	cudaMemset(*a, 0, LIMBS * sizeof(mp_limb));
+	hipMalloc((void **) a, LIMBS * sizeof(mp_limb));
+	hipMemset(*a, 0, LIMBS * sizeof(mp_limb));
 }
 
 __host__
 void mp_dev_init_limbs(mp_p *a, size_t limbs) {
-	cudaMalloc((void **) a, limbs * sizeof(mp_limb));
-	cudaMemset(*a, 0, limbs * sizeof(mp_limb));
+	hipMalloc((void **) a, limbs * sizeof(mp_limb));
+	hipMemset(*a, 0, limbs * sizeof(mp_limb));
 }
 
 __host__ __device__
@@ -62,7 +63,8 @@ void mp_set_ui(mp_t a, mp_limb s) {
 __host__ __device__
 mp_limb mp_limb_addc(mp_t a, const mp_limb s, const size_t limb) {
 	mp_limb carry = 0;
-#ifdef __CUDA_ARCH__
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0;
 	__add_cc(a[limb], a[limb], s);
 	__addcy(carry);
 #else
@@ -75,7 +77,8 @@ mp_limb mp_limb_addc(mp_t a, const mp_limb s, const size_t limb) {
 __host__ __device__
 mp_limb mp_limb_subc(mp_t a, const mp_limb s, const size_t limb) {
 	mp_limb carry = 0;
-#ifdef __CUDA_ARCH__
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0;
 	__sub_cc(a[limb], a[limb], s);
 	__addcy(carry);
 #else
@@ -123,23 +126,24 @@ void mp_copy_ss(mp_strided_t a, const size_t a_elem,
 
 __host__
 void mp_copy_to_dev(mp_p dev_a, const mp_t b) {
-	cudaMemcpy(dev_a, b, LIMBS * sizeof(mp_limb), cudaMemcpyHostToDevice);
+	hipMemcpy(dev_a, b, LIMBS * sizeof(mp_limb), hipMemcpyHostToDevice);
 }
 
 __host__
 void mp_copy_to_dev_limbs(mp_p dev_a, const mp_t b, const size_t limbs) {
-	cudaMemcpy(dev_a, b, limbs * sizeof(mp_limb), cudaMemcpyHostToDevice);
+	hipMemcpy(dev_a, b, limbs * sizeof(mp_limb), hipMemcpyHostToDevice);
 }
 
 __host__
 void mp_copy_from_dev(mp_t a, const mp_p dev_b) {
-	cudaMemcpy(a, dev_b, LIMBS * sizeof(mp_limb), cudaMemcpyDeviceToHost);
+	hipMemcpy(a, dev_b, LIMBS * sizeof(mp_limb), hipMemcpyDeviceToHost);
 }
 
-__host__
+__host__ __device__
 mp_limb mp_mul_ui(mp_t r, const mp_t a, const mp_limb s) {
-#ifdef __CUDA_ARCH__
+#ifdef __HIP_DEVICE_COMPILE__
 
+	mp_limb __carry_flag = 0;
 	mp_limb carry = 0;
 	mp_set_ui(r, 0);
 	__mad_lo_cc(r[0], a[0], s, r[0]);
@@ -181,7 +185,8 @@ mp_limb mp_mul_ui(mp_t r, const mp_t a, const mp_limb s) {
 
 __host__ __device__
 mp_limb mp_mul_limb(mp_limb *r, mp_limb a, mp_limb b) {
-#ifdef __CUDA_ARCH__
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0; (void)__carry_flag;
 	__mul_lo(*r, a, b);
 	mp_limb ret;
 	__mul_hi(ret, a, b);
@@ -196,8 +201,8 @@ mp_limb mp_mul_limb(mp_limb *r, mp_limb a, mp_limb b) {
 __host__ __device__
 mp_limb mp_add(mp_t r, const mp_t a, const mp_t b) {
 	mp_limb carry = 0;
-#ifdef __CUDA_ARCH__
-
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0;
 	__add_cc(r[0], a[0], b[0]);
 #pragma unroll
 	for (size_t i = 1; i < LIMBS; i++) {
@@ -219,8 +224,8 @@ mp_limb mp_add(mp_t r, const mp_t a, const mp_t b) {
 __host__ __device__
 mp_limb mp_add_limbs(mp_t r, const mp_t a, const mp_t b, size_t limbs) {
 	mp_limb carry = 0;
-#ifdef __CUDA_ARCH__
-
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0;
 	__add_cc(r[0], a[0], b[0]);
 #pragma unroll
 	for (size_t i = 1; i < limbs; i++) {
@@ -265,7 +270,8 @@ mp_limb mp_add_ui(mp_t r, const mp_t a, const mp_limb s) {
 __host__ __device__
 mp_limb mp_sub(mp_t r, const mp_t a, const mp_t b) {
 	mp_limb carry = 0;
-#ifdef __CUDA_ARCH__
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0;
 	__sub_cc(r[0], a[0], b[0]);
 #pragma unroll
 	for (size_t i = 1; i < LIMBS; i++) {
@@ -347,7 +353,8 @@ void mp_mul(mp_t r, const mp_t a, const mp_t b) {
 __host__ __device__
 int mp_gt(const mp_t a, const mp_t b) {
 
-#ifdef __CUDA_ARCH__
+#ifdef __HIP_DEVICE_COMPILE__
+	mp_limb __carry_flag = 0;
 	mp_limb tmp;
 	  __sub_cc(tmp, b[0], a[0]);
 #pragma unroll

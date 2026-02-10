@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include <stdlib.h>
 #include <search.h>
 #include "ecm/factor_task.h"
@@ -377,8 +378,8 @@ void task_finish(int task_id, run_config config) {
 
 	// print if done
 	if (task->done) {
-		int outstrlen = 1000;
-		char outstr[outstrlen];
+		const int outstrlen = 1000;
+		char outstr[1000];
 		int written = snprintf(outstr, outstrlen, "%d", task->id);
 		if (!task->factors) {
 			written += snprintf(outstr + written, outstrlen-written, " 1\n");

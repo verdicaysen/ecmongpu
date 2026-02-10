@@ -1,10 +1,11 @@
+#include "hip/hip_runtime.h"
 #include <stdlib.h>
 #include <getopt.h>
 #include <gmp.h>
-#include <omp.h>
+/* omp.h removed - unused in this file */
 #include <unistd.h>
 #include <ecm/batch.h>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 #include <cudautil.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -88,15 +89,15 @@ void ecm_stage1_init(run_config config) {
 
 	// Initialize all devices
 	for (int dev = 0; dev < config->devices; dev++) {
-		cudaSetDevice(dev);
+		hipSetDevice(dev);
 		if (config->dev_ctx[dev].stage1.dev_bound_naf == NULL) {
 			LOG_INFO("Stage 1 Initialization of device #%i", dev);
-			CUDA_SAFE_CALL(cudaMalloc((void **) &config->dev_ctx[dev].stage1.dev_bound_naf,
+			CUDA_SAFE_CALL(hipMalloc((void **) &config->dev_ctx[dev].stage1.dev_bound_naf,
 									  config->stage1.bound_naf_digits * sizeof(naf_limb)));
-			CUDA_SAFE_CALL(cudaMemcpy(config->dev_ctx[dev].stage1.dev_bound_naf,
+			CUDA_SAFE_CALL(hipMemcpy(config->dev_ctx[dev].stage1.dev_bound_naf,
 									  config->stage1.host_bound_naf,
 									  config->stage1.bound_naf_digits * sizeof(naf_limb),
-									  cudaMemcpyHostToDevice));
+									  hipMemcpyHostToDevice));
 		}
 	}
 }
@@ -110,10 +111,10 @@ void ecm_stage1(run_config config, batch_naf *batch, size_t stream) {
 
 
 	/* Copy batch from host to device */
-	CUDA_SAFE_CALL_NO_SYNC(cudaMemcpyAsync(&batch->dev[stream]->job,
+	CUDA_SAFE_CALL_NO_SYNC(hipMemcpyAsync(&batch->dev[stream]->job,
 										   &batch->host[stream]->job,
 										   sizeof(batch_job_data_naf),
-										   cudaMemcpyHostToDevice,
+										   hipMemcpyHostToDevice,
 										   config->cuda_streams[stream]));
 
 	/* Launch multiplication */
@@ -127,13 +128,13 @@ void ecm_stage1(run_config config, batch_naf *batch, size_t stream) {
 					config->stage1.bound_naf_digits);
 
 	/* Copy batch from device to host */
-	CUDA_SAFE_CALL_NO_SYNC(cudaMemcpyAsync(&batch->host[stream]->job,
+	CUDA_SAFE_CALL_NO_SYNC(hipMemcpyAsync(&batch->host[stream]->job,
 										   &batch->dev[stream]->job,
 										   sizeof(batch_job_data_naf),
-										   cudaMemcpyDeviceToHost,
+										   hipMemcpyDeviceToHost,
 										   config->cuda_streams[stream]));
 
-	cudaStreamSynchronize(config->cuda_streams[stream]);
+	hipStreamSynchronize(config->cuda_streams[stream]);
 	batch_finished_cb_stage1(batch->host[stream]);
 
 }

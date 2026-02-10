@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /*
 	co-ecm
 	Copyright (C) 2018  Jonas Wloka
@@ -22,8 +23,8 @@
 typedef struct _run_config *run_config;
 
 #include <gmp.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
+#include <hip/hip_runtime.h>
 #include <pthread.h>
 
 #include "ecc/naf.h"
@@ -142,7 +143,7 @@ typedef struct _run_config {
 
 	__gmp_randstate_struct *rand;    /**< GMP RNG struct to be used with this factor task, e.g. for curve generation. */
 	int n_cuda_streams;                /**< Number of CUDA streams to use for this task */
-	cudaStream_t *cuda_streams;        /**< Array containing the (reused) CUDA streams for this task (to avoid stream creation overhead */
+	hipStream_t *cuda_streams;        /**< Array containing the (reused) CUDA streams for this task (to avoid stream creation overhead */
 	pthread_t *host_threads;
 	int cuda_autotune;        /**< Enable or disable autotuning block/thread config */
 	int cuda_threads_per_block;        /**< Number of threads executed within one block for this task */

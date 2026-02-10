@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include "input/input.h"
 #include <unistd.h>
 #include <sys/stat.h>

@@ -1,5 +1,5 @@
 #include <gmp.h>
-#include <cuda.h>
+#include <hip/hip_runtime.h>
 #include "mp/mp.h"
 #include "mp/gmp_conversion.h"
 #include "test/testutil.h"

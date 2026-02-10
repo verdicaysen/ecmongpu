@@ -19,17 +19,16 @@
 #ifndef CUDA_UTIL_H
 #define CUDA_UTIL_H
 
-#include <cuda_runtime.h>
-#include <cudautil.h>
+#include <hip/hip_runtime.h>
 
 /**
  * Macro to wrap calls to CUDA Runtime library and kernels and do error checking.
  * Does not synchronize the device, might return old errors.
  */
 #  define CUDA_SAFE_CALL_NO_SYNC(call) do {                                 \
-    cudaError_t err = call;                                                    \
-    if( cudaSuccess != err) {                                                \
-        LOG_FATAL("Cuda Error: %s", cudaGetErrorString( err) );              \
+    hipError_t err = call;                                                    \
+    if( hipSuccess != err) {                                                \
+        LOG_FATAL("Cuda Error: %s", hipGetErrorString( err) );              \
         exit(EXIT_FAILURE);                                                  \
     } } while (0)
 
@@ -39,9 +38,9 @@
  */
 #  define CUDA_SAFE_CALL(call) do {                                         \
     CUDA_SAFE_CALL_NO_SYNC(call);                                            \
-    cudaError_t err = cudaDeviceSynchronize();                                 \
-    if( cudaSuccess != err) {                                                \
-        LOG_FATAL("Cuda Error: %s", cudaGetErrorString( err) );              \
+    hipError_t err = hipDeviceSynchronize();                                 \
+    if( hipSuccess != err) {                                                \
+        LOG_FATAL("Cuda Error: %s", hipGetErrorString( err) );              \
         exit(EXIT_FAILURE);                                                  \
     } } while (0)
 

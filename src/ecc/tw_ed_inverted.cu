@@ -1,5 +1,5 @@
-#include <cuda.h>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
+#include <hip/hip_runtime.h>
 #include "ecc/twisted_edwards.h"
 #include "mp/mp.h"
 #include "mp/gmp_conversion.h"
@@ -72,6 +72,7 @@ int tw_ed_double(point_tw_ed *r, const point_tw_ed *op, const curve_tw_ed *curve
 }
 
 
+__host__ __device__
 void tw_ed_point_invert(point_tw_ed *p, const mon_info *info) {
 	mp_sub(p->x, info->n, p->x);
 }
@@ -148,6 +149,7 @@ int tw_ed_add(point_tw_ed *r, const point_tw_ed *op1, const point_tw_ed *op2, co
 /**
  * Dummy implementation using repeated addition. No optimized tripling for inverted coordinates is implemented.
  */
+__host__ __device__
 int tw_ed_triple(point_tw_ed *r, const point_tw_ed *op, const curve_tw_ed *curve, const mon_info *info, bool extend) {
 	point_tw_ed tmp;
 	tw_ed_add(&tmp, op, op, curve, info, true);
@@ -308,6 +310,7 @@ void tw_ed_to_reg(point_tw_ed *p, const mon_info *info) {
 }
 
 
+__host__ __device__
 bool tw_ed_scale_point(point_tw_ed *r, const point_tw_ed *p, const mon_info *info) {
 
 	mp_t zinv;
@@ -669,13 +672,14 @@ void tw_ed_random_curve_gkl2016_j4(point_tw_ed *p1, curve_tw_ed *curve, mon_info
 
 }
 
+__host__ __device__
 void tw_ed_point_set_id(point_tw_ed *p) {
 	mp_set_ui(p->x, 0);
 	mp_set_ui(p->y, 1);
 	mp_set_ui(p->z, 1);
 }
 
-__inline__
+__host__ __device__ __inline__
 void tw_ed_point_invert_precomp(point_tw_ed *p, const mon_info *info) {
 	tw_ed_point_invert(p->x, info->n, p->x);
 }

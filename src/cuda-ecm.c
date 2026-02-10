@@ -1,9 +1,10 @@
+#include "hip/hip_runtime.h"
 #include <stdlib.h>
 #include <time.h>
 #include <gmp.h>
 #include <search.h>
 #include <errno.h>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 #include "cudautil.h"
 
 #include "input/input.h"
@@ -63,7 +64,7 @@ void *thread_run(void *argsv) {
 		}
 
 		/* Set this threads device */
-		cudaSetDevice(args->batch->host[args->stream]->device);
+		hipSetDevice(args->batch->host[args->stream]->device);
 
 		// Collect tasks	
 		args->batch->host[args->stream]->n_jobs = 0;
@@ -136,7 +137,7 @@ void ecm_init(batch_naf *batch, run_config config) {
 		int numBlocks, numBlocksMax = 0;
 		for (int threads = 32; threads <= 1024; threads += 32) {
 			CUDA_SAFE_CALL(
-					cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocks, &cuda_tw_ed_smul_naf_batch,
+					hipOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocks, &cuda_tw_ed_smul_naf_batch,
 																  threads, sizeof(mon_info) * threads)
 			);
 			if (numBlocks > numBlocksMax) {
@@ -212,8 +213,8 @@ int main(int argc, char *argv[]) {
 
 	signal(SIGPIPE, SIG_IGN);
 
-	cudaDeviceReset();
-	cudaSetDeviceFlags(cudaDeviceBlockingSync);
+	hipDeviceReset();
+	hipSetDeviceFlags(hipDeviceScheduleBlockingSync);
 
 
 	LOG_INFO("co-ecm version: git-%s-%s", GIT_BRANCH, GIT_COMMIT_HASH);
@@ -230,7 +231,7 @@ int main(int argc, char *argv[]) {
 	// set config run flag
 	config->run = &run;
 
-	CUDA_SAFE_CALL(cudaGetDeviceCount(&config->devices));
+	CUDA_SAFE_CALL(hipGetDeviceCount(&config->devices));
 	if (config->devices == 0) {
 		LOG_FATAL("No CUDA device available.");
 		exit(EXIT_FAILURE);
@@ -238,8 +239,8 @@ int main(int argc, char *argv[]) {
 
 	/* Iterate and log available CUDA devices */
 	for (int d = 0; d < config->devices; d++) {
-		struct cudaDeviceProp cuda_properties;
-		CUDA_SAFE_CALL(cudaGetDeviceProperties(&cuda_properties, d));
+		struct hipDeviceProp_t cuda_properties;
+		CUDA_SAFE_CALL(hipGetDeviceProperties(&cuda_properties, d));
 		LOG_INFO("CUDA Device %i", d);
 		LOG_INFO("\tName:\t%s", cuda_properties.name);
 		LOG_INFO("\tGlobal Memory:\t%zu bytes", cuda_properties.totalGlobalMem);

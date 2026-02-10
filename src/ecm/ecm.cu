@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include "ecm/ecm.h"
 #include "mp/mp.h"
 #include "ecc/twisted_edwards.h"

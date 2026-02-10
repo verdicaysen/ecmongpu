@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include <gmp.h>
 #include "mp/mp.h"
 #include "mp/mp_montgomery.h"
@@ -58,7 +59,7 @@ int test() {
 
     cuda_mon_inv<<<1,1>>>(dev_r, dev_a, dev_info);
     
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
 
     mp_copy_from_dev(ainv, dev_r);
 

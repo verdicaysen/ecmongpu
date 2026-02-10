@@ -1,5 +1,6 @@
+#include "hip/hip_runtime.h"
 #include <gmp.h>
-#include <cuda.h>
+#include <hip/hip_runtime.h>
 #include "mp/mp.h"
 #include "mp/mp_montgomery.h"
 #include "log.h"
@@ -68,19 +69,19 @@ int test() {
 
 		mon_info *dev_info = mon_info_copy_to_dev(&info);
 
-		cudaEvent_t start, stop;
-		cudaEventCreate(&start);
-		cudaEventCreate(&stop);
+		hipEvent_t start, stop;
+		hipEventCreate(&start);
+		hipEventCreate(&stop);
 
 		/* Compute Montgomery Expo */
 		LOG_VERBOSE("\n=== Expo:\n");
-		cudaEventRecord(start);
-		cuda_mon_exp << < 1, 1 >> > (dev_r, dev_a, dev_e, dev_info);
-		cudaEventRecord(stop);
+		hipEventRecord(start);
+		cuda_mon_exp <<< 1, 1 >>> (dev_r, dev_a, dev_e, dev_info);
+		hipEventRecord(stop);
 
 		mp_copy_from_dev(r, dev_r);
 
-		cudaEventSynchronize(stop);
+		hipEventSynchronize(stop);
 
 
 		LOG_VERBOSE("\n=== Inverse Transform:\n");

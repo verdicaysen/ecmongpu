@@ -1,5 +1,5 @@
-#include <cuda.h>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
+#include <hip/hip_runtime.h>
 #include "ecc/twisted_edwards.h"
 #include "ecm/factor_task.h"
 #include "mp/mp.h"

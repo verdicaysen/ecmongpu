@@ -1,5 +1,6 @@
+#include "hip/hip_runtime.h"
 #include <gmp.h>
-#include <cuda.h>
+#include <hip/hip_runtime.h>
 #include "mp/mp.h"
 #include "log.h"
 #include "mp/mp_montgomery.h"
@@ -61,11 +62,11 @@ int test() {
 		mon_info *dev_info = mon_info_copy_to_dev(&info);
 
 		/* Compute Montgomery Square */
-		cuda_mon_square << < 1, 1 >> > (dev_r, dev_a, dev_info);
+		cuda_mon_square <<< 1, 1 >>> (dev_r, dev_a, dev_info);
 
 		mp_copy_from_dev(r, dev_r);
 
-		cudaDeviceSynchronize();
+		hipDeviceSynchronize();
 
 		from_mon(r, r, &info);
 

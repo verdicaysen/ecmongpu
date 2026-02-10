@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /*
 	co-ecm
 	Copyright (C) 2018  Jonas Wloka
@@ -20,7 +21,7 @@
 #define MONPROD_C_MP_H
 
 
-#ifndef __CUDACC__ /* when compiling with g++ ... */
+#ifndef __HIPCC__ /* when compiling with g++ ... */
 #ifndef __device__
 #define __device__
 #endif
@@ -35,7 +36,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <malloc.h>
-#include <cuda.h>
+#include <hip/hip_runtime.h>
 #include <stdbool.h>
 
 #include "build_config.h"
@@ -57,6 +58,14 @@ typedef mp_limb mp_strided_t[MP_STRIDE * LIMBS];
  */
 typedef mp_limb *mp_p;
 
+#if (LIMB_BITS == 32)
+#define _PRI_ulimb PRIu32
+#define _PRI_xlimb PRIx32
+#elif (LIMB_BITS == 64)
+#define _PRI_ulimb PRIu64
+#define _PRI_xlimb PRIx64
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -65,57 +74,222 @@ extern "C" {
 /* Device code */
 /***************/
 
-#if defined(_MSC_VER)
-#  define ASM asm volatile
-#else
-#  define ASM asm __volatile__
-#endif
+/*
+ * Portable carry-chain arithmetic.
+ *
+ * The original code used NVIDIA PTX inline assembly with an implicit
+ * carry flag register (add.cc / addc / addc.cc / sub.cc / subc / etc.).
+ * AMD GCN/RDNA has no equivalent single-instruction carry chain, so
+ * we emulate the carry flag with a thread-local variable.
+ *
+ * The _cc suffix means "set carry flag from this operation".
+ * The c prefix (addc/subc/madc) means "consume the current carry flag".
+ * Combined (addc_cc, subc_cc, madc_lo_cc, madc_hi_cc) means both.
+ */
+
+/* Carry flag: must be declared as a local variable in each device function
+ * that uses the carry-chain macros, via: mp_limb __carry_flag = 0;
+ * This ensures it lives in a register, not global device memory. */
+
+/* --- Addition with carry chain --- */
+
+/* add.cc: r = a + b, set carry */
+#define __add_cc(r, a, b) do { \
+	mp_limb __a = (a), __b = (b); \
+	(r) = __a + __b; \
+	__carry_flag = ((r) < __a) ? 1 : 0; \
+} while(0)
+
+/* addc: r = a + b + carry_in, do NOT set carry */
+#define __addc(r, a, b) do { \
+	mp_limb __a = (a), __b = (b), __cf = __carry_flag; \
+	(r) = __a + __b + __cf; \
+} while(0)
+
+/* addc.cc: r = a + b + carry_in, set carry */
+#define __addc_cc(r, a, b) do { \
+	mp_limb __a = (a), __b = (b), __cf = __carry_flag; \
+	mp_limb __t = __a + __b; \
+	mp_limb __c1 = (__t < __a) ? 1 : 0; \
+	(r) = __t + __cf; \
+	__carry_flag = __c1 | (((r) < __t) ? 1 : 0); \
+} while(0)
+
+/* addcy: carry = 0 + 0 + carry_in (extract carry flag) */
+#define __addcy(carry) do { (carry) = __carry_flag; } while(0)
+
+/* addcy2: carry = carry + 0 + carry_in, set carry */
+#define __addcy2(carry) do { \
+	mp_limb __t = (carry) + __carry_flag; \
+	__carry_flag = (__t < (carry)) ? 1 : 0; \
+	(carry) = __t; \
+} while(0)
+
+/* --- Subtraction with borrow chain --- */
+
+/* sub.cc: r = a - b, set borrow */
+#define __sub_cc(r, a, b) do { \
+	mp_limb __a = (a), __b = (b); \
+	(r) = __a - __b; \
+	__carry_flag = (__a < __b) ? 1 : 0; \
+} while(0)
+
+/* subc: r = a - b - borrow_in, do NOT set borrow */
+#define __subc(r, a, b) do { \
+	mp_limb __a = (a), __b = (b), __cf = __carry_flag; \
+	(r) = __a - __b - __cf; \
+} while(0)
+
+/* subc.cc: r = a - b - borrow_in, set borrow */
+#define __subc_cc(r, a, b) do { \
+	mp_limb __a = (a), __b = (b), __cf = __carry_flag; \
+	mp_limb __t = __a - __b; \
+	mp_limb __c1 = (__a < __b) ? 1 : 0; \
+	(r) = __t - __cf; \
+	__carry_flag = __c1 | ((__t < __cf) ? 1 : 0); \
+} while(0)
+
+/* --- Multiplication --- */
 
 #if (LIMB_BITS == 32)
-#define __ASM_SIZE "32"
-#define __ASM_CONSTRAINT "r"
 
-#define _PRI_ulimb PRIu32
-#define _PRI_xlimb PRIx32
+/* mul.lo: r = low32(a * b) */
+#define __mul_lo(r, a, b) do { \
+	(r) = (mp_limb)((uint32_t)(a) * (uint32_t)(b)); \
+} while(0)
+
+/* mul.hi: r = high32(a * b) */
+#define __mul_hi(r, a, b) do { \
+	(r) = (mp_limb)(((uint64_t)(uint32_t)(a) * (uint64_t)(uint32_t)(b)) >> 32); \
+} while(0)
+
+/* mad.lo: r = low32(a * b) + c */
+#define __mad_lo(r, a, b, c) do { \
+	(r) = (mp_limb)((uint32_t)(a) * (uint32_t)(b)) + (c); \
+} while(0)
+
+/* mad.lo.cc: r = low32(a * b) + c, set carry (1-bit overflow from addition) */
+#define __mad_lo_cc(r, a, b, c) do { \
+	mp_limb __lo = (mp_limb)((uint32_t)(a) * (uint32_t)(b)); \
+	mp_limb __c = (mp_limb)(c); \
+	(r) = __lo + __c; \
+	__carry_flag = ((r) < __lo) ? 1 : 0; \
+} while(0)
+
+/* mad.hi: r = high32(a * b) + c */
+#define __mad_hi(r, a, b, c) do { \
+	(r) = (mp_limb)(((uint64_t)(uint32_t)(a) * (uint64_t)(uint32_t)(b)) >> 32) + (c); \
+} while(0)
+
+/* mad.hi.cc: r = high32(a * b) + c, set carry */
+#define __mad_hi_cc(r, a, b, c) do { \
+	uint64_t __t = ((uint64_t)(uint32_t)(a) * (uint64_t)(uint32_t)(b)); \
+	mp_limb __hi = (mp_limb)(__t >> 32); \
+	mp_limb __s = __hi + (mp_limb)(c); \
+	__carry_flag = (__s < __hi) ? 1 : 0; \
+	(r) = __s; \
+} while(0)
+
+/* madc.hi: r = high32(a * b) + c + carry_in (no carry out) */
+#define __madc_hi(r, a, b, c) do { \
+	uint64_t __t = ((uint64_t)(uint32_t)(a) * (uint64_t)(uint32_t)(b)); \
+	(r) = (mp_limb)(__t >> 32) + (mp_limb)(c) + __carry_flag; \
+} while(0)
+
+/* madc.lo.cc: r = low32(a * b) + c + carry_in, set carry (1-bit overflow) */
+#define __madc_lo_cc(r, a, b, c) do { \
+	mp_limb __lo = (mp_limb)((uint32_t)(a) * (uint32_t)(b)); \
+	mp_limb __c = (mp_limb)(c); \
+	mp_limb __cf = __carry_flag; \
+	mp_limb __t1 = __lo + __c; \
+	mp_limb __c1 = (__t1 < __lo) ? 1 : 0; \
+	(r) = __t1 + __cf; \
+	__carry_flag = __c1 | (((r) < __t1) ? 1 : 0); \
+} while(0)
+
+/* madc.hi.cc: r = high32(a * b) + c + carry_in, set carry */
+#define __madc_hi_cc(r, a, b, c) do { \
+	uint64_t __t = ((uint64_t)(uint32_t)(a) * (uint64_t)(uint32_t)(b)); \
+	mp_limb __hi = (mp_limb)(__t >> 32); \
+	uint64_t __s = (uint64_t)__hi + (uint64_t)(uint32_t)(c) + (uint64_t)__carry_flag; \
+	(r) = (mp_limb)__s; \
+	__carry_flag = (mp_limb)(__s >> 32); \
+} while(0)
+
+/* --- Funnel shifts (32-bit only) --- */
+/* shf.r.clamp: r = funnel_shift_right(a, b, c) = (b:a) >> c */
+#define __shf_r_clamp(r, a, b, c) do { \
+	uint32_t __sh = (c); \
+	if (__sh >= 32) (r) = (b) >> (__sh - 32); \
+	else (r) = ((uint32_t)(a) >> __sh) | ((uint32_t)(b) << (32 - __sh)); \
+} while(0)
+
+/* shf.l.clamp: r = funnel_shift_left(a, b, c) = (b:a) << c */
+#define __shf_l_clamp(r, a, b, c) do { \
+	uint32_t __sh = (c); \
+	if (__sh >= 32) (r) = (a) << (__sh - 32); \
+	else (r) = ((uint32_t)(b) << __sh) | ((uint32_t)(a) >> (32 - __sh)); \
+} while(0)
 
 #elif (LIMB_BITS == 64)
-#define __ASM_SIZE "64"
-#define __ASM_CONSTRAINT "l"
 
-#define _PRI_ulimb PRIu64
-#define _PRI_xlimb PRIx64
-#endif
+#define __mul_lo(r, a, b) do { \
+	(r) = (mp_limb)((uint64_t)(a) * (uint64_t)(b)); \
+} while(0)
 
-#define __addc(r, a, b) ASM ("addc.u" __ASM_SIZE " %0, %1, %2;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a),__ASM_CONSTRAINT (b))
-#define __add_cc(r, a, b) ASM ("add.cc.u" __ASM_SIZE " %0, %1, %2;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b))
-#define __addc_cc(r, a, b) ASM ("addc.cc.u" __ASM_SIZE " %0, %1, %2;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b))
-#define __subc(r, a, b) ASM ("subc.u" __ASM_SIZE " %0, %1, %2;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a),__ASM_CONSTRAINT (b))
-#define __sub_cc(r, a, b) ASM ("sub.cc.u" __ASM_SIZE " %0, %1, %2;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b))
-#define __subc_cc(r, a, b) ASM ("subc.cc.u" __ASM_SIZE " %0, %1, %2;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b))
+#define __mul_hi(r, a, b) do { \
+	__uint128_t __t = (__uint128_t)(uint64_t)(a) * (__uint128_t)(uint64_t)(b); \
+	(r) = (mp_limb)(__t >> 64); \
+} while(0)
 
+#define __mad_lo(r, a, b, c) do { \
+	(r) = (mp_limb)((uint64_t)(a) * (uint64_t)(b)) + (c); \
+} while(0)
 
-#define __addcy(carry) ASM ("addc.u" __ASM_SIZE " %0, 0, 0;": "=" __ASM_CONSTRAINT (carry))
-#define __addcy2(carry) ASM ("addc.cc.u" __ASM_SIZE " %0, %0, 0;": "+" __ASM_CONSTRAINT(carry))
+#define __mad_lo_cc(r, a, b, c) do { \
+	mp_limb __lo = (mp_limb)((uint64_t)(a) * (uint64_t)(b)); \
+	mp_limb __c = (mp_limb)(c); \
+	(r) = __lo + __c; \
+	__carry_flag = ((r) < __lo) ? 1 : 0; \
+} while(0)
 
-#define __mul_lo(r, a, b) ASM("mul.lo.u" __ASM_SIZE " %0, %1, %2;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a),__ASM_CONSTRAINT (b))
-#define __mul_hi(r, a, b) ASM("mul.hi.u" __ASM_SIZE " %0, %1, %2;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a),__ASM_CONSTRAINT (b))
+#define __mad_hi(r, a, b, c) do { \
+	__uint128_t __t = (__uint128_t)(uint64_t)(a) * (__uint128_t)(uint64_t)(b); \
+	(r) = (mp_limb)(__t >> 64) + (c); \
+} while(0)
 
-#define __mad_lo(r, a, b, c) ASM("mad.lo.u" __ASM_SIZE " %0, %1, %2, %3;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b), __ASM_CONSTRAINT (c))
-#define __mad_lo_cc(r, a, b, c) ASM("mad.lo.cc.u" __ASM_SIZE " %0, %1, %2, %3;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b), __ASM_CONSTRAINT (c))
-#define __mad_hi(r, a, b, c) ASM("mad.hi.u" __ASM_SIZE " %0, %1, %2, %3;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b), __ASM_CONSTRAINT (c))
-#define __mad_hi_cc(r, a, b, c) ASM("mad.hi.cc.u" __ASM_SIZE " %0, %1, %2, %3;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b), __ASM_CONSTRAINT (c))
+#define __mad_hi_cc(r, a, b, c) do { \
+	__uint128_t __t = (__uint128_t)(uint64_t)(a) * (__uint128_t)(uint64_t)(b); \
+	mp_limb __hi = (mp_limb)(__t >> 64); \
+	mp_limb __s = __hi + (mp_limb)(c); \
+	__carry_flag = (__s < __hi) ? 1 : 0; \
+	(r) = __s; \
+} while(0)
 
-#define __madc_hi(r, a, b, c) ASM("madc.hi.u" __ASM_SIZE " %0, %1, %2, %3;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b), __ASM_CONSTRAINT (c))
+#define __madc_hi(r, a, b, c) do { \
+	__uint128_t __t = (__uint128_t)(uint64_t)(a) * (__uint128_t)(uint64_t)(b); \
+	(r) = (mp_limb)(__t >> 64) + (mp_limb)(c) + __carry_flag; \
+} while(0)
 
-#define __madc_lo_cc(r, a, b, c) ASM("madc.lo.cc.u" __ASM_SIZE " %0, %1, %2, %3;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b), __ASM_CONSTRAINT (c))
-#define __madc_hi_cc(r, a, b, c) ASM("madc.hi.cc.u" __ASM_SIZE " %0, %1, %2, %3;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b), __ASM_CONSTRAINT (c))
+#define __madc_lo_cc(r, a, b, c) do { \
+	mp_limb __lo = (mp_limb)((uint64_t)(a) * (uint64_t)(b)); \
+	mp_limb __c = (mp_limb)(c); \
+	mp_limb __cf = __carry_flag; \
+	mp_limb __t1 = __lo + __c; \
+	mp_limb __c1 = (__t1 < __lo) ? 1 : 0; \
+	(r) = __t1 + __cf; \
+	__carry_flag = __c1 | (((r) < __t1) ? 1 : 0); \
+} while(0)
 
+#define __madc_hi_cc(r, a, b, c) do { \
+	__uint128_t __t = (__uint128_t)(uint64_t)(a) * (__uint128_t)(uint64_t)(b); \
+	mp_limb __hi = (mp_limb)(__t >> 64); \
+	__uint128_t __s = (__uint128_t)__hi + (__uint128_t)(uint64_t)(c) + (__uint128_t)__carry_flag; \
+	(r) = (mp_limb)__s; \
+	__carry_flag = (mp_limb)(__s >> 64); \
+} while(0)
 
-
-#if (LIMB_BITS == 32)
-#define __shf_r_clamp(r, a, b, c) ASM("shf.r.clamp.b" __ASM_SIZE " %0, %1, %2, %3;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b), __ASM_CONSTRAINT (c))
-#define __shf_l_clamp(r, a, b, c) ASM("shf.l.clamp.b" __ASM_SIZE " %0, %1, %2, %3;": "=" __ASM_CONSTRAINT (r): __ASM_CONSTRAINT (a), __ASM_CONSTRAINT (b), __ASM_CONSTRAINT (c))
-#endif
+#endif /* LIMB_BITS */
 
 
 

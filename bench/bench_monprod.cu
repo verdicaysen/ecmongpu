@@ -1,5 +1,6 @@
+#include "hip/hip_runtime.h"
 #include <gmp.h>
-#include <cuda.h>
+#include <hip/hip_runtime.h>
 #include "mp/mp.h"
 #include "log.h"
 #include "mp/mp_montgomery.h"
@@ -101,17 +102,17 @@ int test() {
 
 
 	monprod_bench *data_dev;
-	CUDA_SAFE_CALL(cudaMalloc((void **)&data_dev, sizeof(monprod_bench)));
-	CUDA_SAFE_CALL(cudaMemcpy(data_dev, data, sizeof(monprod_bench), cudaMemcpyHostToDevice));
+	CUDA_SAFE_CALL(hipMalloc((void **)&data_dev, sizeof(monprod_bench)));
+	CUDA_SAFE_CALL(hipMemcpy(data_dev, data, sizeof(monprod_bench), hipMemcpyHostToDevice));
 
       	struct timespec start={0,0}, end={0,0};
       	double tmp_time, m_per_sec;
         clock_gettime(CLOCK_MONOTONIC, &start);
 	bench<<<BLOCKS, THREADS_PER_BLOCK>>>(data_dev);
-	cudaDeviceSynchronize();
+	hipDeviceSynchronize();
         clock_gettime(CLOCK_MONOTONIC, &end);
 
-	CUDA_SAFE_CALL(cudaMemcpy(data, data_dev, sizeof(monprod_bench), cudaMemcpyDeviceToHost));
+	CUDA_SAFE_CALL(hipMemcpy(data, data_dev, sizeof(monprod_bench), hipMemcpyDeviceToHost));
 
         tmp_time = (((double)end.tv_sec + 1.0e-9*end.tv_nsec) - ((double)start.tv_sec + 1.0e-9*start.tv_nsec));
 	m_per_sec = ((double) ((double)ITERATIONS*BATCH_JOB_SIZE)) / (tmp_time);

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /*
 	co-ecm
 	Copyright (C) 2018  Jonas Wloka

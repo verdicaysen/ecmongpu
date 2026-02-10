@@ -1,5 +1,6 @@
+#include "hip/hip_runtime.h"
 #include <gmp.h>
-#include <cuda.h>
+#include <hip/hip_runtime.h>
 #include <time.h>
 #include "mp/mp.h"
 #include "mp/gmp_conversion.h"
@@ -45,7 +46,7 @@ int test() {
 
 		mp_copy_to_dev(dev_b, b);
 
-		cuda_mp_mul << < 1, 1 >> > (dev_r, dev_a, dev_b);
+		cuda_mp_mul <<< 1, 1 >>> (dev_r, dev_a, dev_b);
 
 		mp_copy_from_dev(r, dev_r);
 

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include "mp/gmp_conversion.h"
 #include "log.h"
 

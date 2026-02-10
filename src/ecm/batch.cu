@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include "ecm/batch.h"
 #include "mp/mp.h"
 #include "ecc/twisted_edwards.h"
@@ -64,11 +65,11 @@ void batch_allocate(run_config config, batch_naf *batch) {
 
 	/* Allocate batch memory */
 	for (int dev = 0; dev < config->devices; dev++) {
-		cudaSetDevice(dev);
+		hipSetDevice(dev);
 		int offset = config->n_cuda_streams * dev;
 		for (int stream = 0; stream < config->n_cuda_streams; stream++) {
-			CUDA_SAFE_CALL(cudaMalloc(&batch->dev[offset + stream], sizeof(batch_job_naf)));
-			CUDA_SAFE_CALL(cudaMallocHost(&batch->host[offset + stream], sizeof(batch_job_naf)));
+			CUDA_SAFE_CALL(hipMalloc(&batch->dev[offset + stream], sizeof(batch_job_naf)));
+			CUDA_SAFE_CALL(hipHostMalloc(&batch->host[offset + stream], sizeof(batch_job_naf)));
 			batch->host[offset + stream]->config = config;
 			batch->host[offset + stream]->device = dev;
 		}

@@ -1,11 +1,16 @@
-cmake_minimum_required(VERSION 0.7)
-project(co-ecm C CUDA)
+cmake_minimum_required(VERSION 3.21)
 
-set(VERSION "v0.8")
+# HIP setup - must be before project() so enable_language(HIP) works
+list(APPEND CMAKE_PREFIX_PATH "/opt/rocm")
+
+project(co-ecm C CXX HIP)
+
+set(VERSION "v0.8-hip")
 set(CMAKE_BUILD_TYPE Release)
 
 set(BUILD_BENCHMARKS 1)
 
+find_package(hip REQUIRED)
 
 # Options and Settings
 
@@ -23,7 +28,7 @@ else()
 endif()
 message("Building for ${BITWIDTH}-bit moduli")
 
-# Default CUDA threads per block.
+# Default threads per block.
 set(BLOCK_SIZE 128)
 
 # Curves per single batch.
@@ -38,7 +43,6 @@ endif()
 message("Building with window size w=${NAF_WINDOW_SIZE}")
 
 # Default allocated number of NAF digits for ECM stage 2.
-# If needed for large Stage 2 bounds. You will be asked to increase this value and recompile.
 set(NAF_STAGE2_DEFAULT_DIGITS 20)
 
 # Use optimized precomputation
@@ -71,31 +75,28 @@ endif()
 set(COORDINATES_EXTENDED 1)
 #set(COORDINATES_INVERTED 1)
 
-# Set the maximum number of registers during compilation. 
-# Low values result in excessive spilling to (slow local, ie global ) memory.
-#set(GPU_MAX_REG 64)
-
-# Set CUDA architectures to generate binary code for
-
+# Set GPU architecture for HIP/ROCm
 if(DEFINED ENV{GPU_ARCH})
     set(GPU_ARCHITECTURE $ENV{GPU_ARCH})
-    message("Building for CUDA architecture ${GPU_ARCHITECTURE}")
+    message("Building for GPU architecture ${GPU_ARCHITECTURE}")
 else()
+  # Auto-detect using rocminfo, fallback to gfx1201 (RX 9070 XT)
   execute_process(
-  	COMMAND bash -c "${CUDA_TOOLKIT_ROOT_DIR}/extras/demo_suite/deviceQuery | grep 'CUDA Capability' | sed -rn ':a;N;$!ba;s/.*:\\s*(.+)\\.(.+).*/sm_\\1\\2/p'"
+    COMMAND bash -c "rocminfo 2>/dev/null | grep -m1 'gfx[0-9]' | sed 's/.*\\(gfx[0-9a-z]*\\).*/\\1/'"
     OUTPUT_VARIABLE GPU_ARCHITECTURE
     ERROR_QUIET
     OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
+  )
   if("${GPU_ARCHITECTURE}" STREQUAL "")
-    set(GPU_ARCHITECTURE "sm_60;sm_61;sm_70;sm_75")
-    message("Could not detect CUDA device architecture, using ${GPU_ARCHITECTURE}")
+    set(GPU_ARCHITECTURE "gfx1201")
+    message("Could not detect GPU architecture, using default: ${GPU_ARCHITECTURE}")
   else()
-    message("Detected CUDA architecture ${GPU_ARCHITECTURE}")
+    message("Detected GPU architecture: ${GPU_ARCHITECTURE}")
   endif()
 endif()
 
-
+# Set CMake HIP architecture (required by CMake's HIP support)
+set(CMAKE_HIP_ARCHITECTURES ${GPU_ARCHITECTURE})
 
 
 # Build setup
@@ -105,19 +106,8 @@ list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 
 find_package(GMP REQUIRED)
 
-
-# Set CUDA compiler flags
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo -Xptxas=-v -lineinfo --keep --compiler-options='-Wall  -Wno-unknown-pragmas'")
-
-if(NOT "${GPU_MAX_REG}" STREQUAL "")
-  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -maxrregcount=${GPU_MAX_REG}")
-endif()
-
-foreach(ARCH IN LISTS GPU_ARCHITECTURE)
-    string(REPLACE "sm_" "compute_" COMPUTE ${ARCH})
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --generate-code arch=${COMPUTE},code=${ARCH}")
-endforeach(ARCH)
-
+# Compute MAX_SCALAR_LIMBS for build_config.h
+math(EXPR MAX_SCALAR_LIMBS "${BITWIDTH} / ${LIMB_BITS}")
 
 include(CTest)
 
@@ -131,38 +121,53 @@ configure_file(
 )
 
 set(CMAKE_C_STANDARD 99)
+set(CMAKE_CXX_STANDARD 14)
 
 
-# Concatenate all .cu files into a single kernel file for nvcc to
-# work around the nvcc limitations of slow non-seperable builds.
-# (nvcc does not know link-time optimization)
+# Concatenate all .cu files into a single HIP source file.
+# Same strategy as the original CUDA build: all GPU code in one TU
+# for better inlining and optimization.
 function(add_cuda_executable TARGET)
     set(CURRENT_C_SOURCES ${ARGN})
-    set(CURRENT_CUDA_SOURCES ${ARGN})
+    set(CURRENT_HIP_SOURCES ${ARGN})
     list(FILTER CURRENT_C_SOURCES EXCLUDE REGEX ".*\\.cu")
-    list(FILTER CURRENT_CUDA_SOURCES INCLUDE REGEX ".*\\.cu")
+    list(FILTER CURRENT_HIP_SOURCES INCLUDE REGEX ".*\\.cu")
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
+    # Concatenate all .cu files into a single .hip.cpp file
     add_custom_command(
-            OUTPUT generated/${TARGET}-cudakernel.cu
-            COMMAND cat ${CURRENT_CUDA_SOURCES} > ${CMAKE_CURRENT_BINARY_DIR}/generated/${TARGET}-cudakernel.cu
+            OUTPUT generated/${TARGET}-hipkernel.hip.cpp
+            COMMAND cat ${CURRENT_HIP_SOURCES} > ${CMAKE_CURRENT_BINARY_DIR}/generated/${TARGET}-hipkernel.hip.cpp
             WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-            DEPENDS ${CURRENT_CUDA_SOURCES}
+            DEPENDS ${CURRENT_HIP_SOURCES}
     )
-    add_executable(${TARGET} ${CURRENT_C_SOURCES} generated/${TARGET}-cudakernel.cu)
+
+    add_executable(${TARGET} ${CURRENT_C_SOURCES} generated/${TARGET}-hipkernel.hip.cpp)
+
+    # Mark concatenated source as HIP language
+    set_source_files_properties(
+        ${CMAKE_CURRENT_BINARY_DIR}/generated/${TARGET}-hipkernel.hip.cpp
+        PROPERTIES LANGUAGE HIP
+    )
+
+    target_compile_options(${TARGET} PRIVATE
+        $<$<COMPILE_LANGUAGE:HIP>:--offload-arch=${GPU_ARCHITECTURE} -Wall -Wno-unknown-pragmas>
+    )
+
+    target_link_libraries(${TARGET} PRIVATE hip::device)
 endfunction()
 
 
 # Set include directories
 include_directories(${PROJECT_SOURCE_DIR}/include)
-include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/generated)
 
-find_package (Threads)
+find_package(Threads)
 link_libraries(gmp)
 link_libraries(${CMAKE_THREAD_LIBS_INIT})
 
 
-# Set common source files
+# Set common source files (keep .cu extension - they get concatenated and compiled as HIP)
 set(COMMON_CUDA_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/src/mp/mp.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/src/mp/mp_montgomery.cu

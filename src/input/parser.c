@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include <unistd.h>
 #include <stdlib.h>
 #include "config/config.h"

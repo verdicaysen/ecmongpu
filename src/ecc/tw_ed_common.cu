@@ -1,6 +1,7 @@
+#include "hip/hip_runtime.h"
 
-#include <cuda.h>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
+#include <hip/hip_runtime.h>
 #include "ecc/twisted_edwards.h"
 #include "mp/mp.h"
 #include "mp/gmp_conversion.h"
@@ -59,19 +60,19 @@ int tw_ed_init_curve(curve_tw_ed *curve, mp_t a, mp_t d, mon_info *info) {
 __host__
 curve_tw_ed *tw_ed_copy_curve_to_dev(const curve_tw_ed *curve) {
 	curve_tw_ed *dev_curve;
-	cudaMalloc((void **) (&dev_curve), sizeof(curve_tw_ed));
-	cudaMemcpy((void *) (dev_curve), curve, sizeof(curve_tw_ed), cudaMemcpyHostToDevice);
+	hipMalloc((void **) (&dev_curve), sizeof(curve_tw_ed));
+	hipMemcpy((void *) (dev_curve), curve, sizeof(curve_tw_ed), hipMemcpyHostToDevice);
 	return dev_curve;
 }
 
 __host__
 int tw_ed_copy_point_to_dev(const point_tw_ed *dev_point, const point_tw_ed host_point, curve_tw_ed *dev_curve) {
-	cudaMemcpy((void *) dev_point, &host_point, sizeof(point_tw_ed), cudaMemcpyHostToDevice);
+	hipMemcpy((void *) dev_point, &host_point, sizeof(point_tw_ed), hipMemcpyHostToDevice);
 	return 0;
 }
 
 int tw_ed_copy_point_from_dev(point_tw_ed *host_point, point_tw_ed *dev_point) {
-	cudaMemcpy(host_point, dev_point, sizeof(point_tw_ed), cudaMemcpyDeviceToHost);
+	hipMemcpy(host_point, dev_point, sizeof(point_tw_ed), hipMemcpyDeviceToHost);
 	return 0;
 }
 
@@ -124,6 +125,7 @@ int tw_ed_point_on_curve(const point_tw_ed *p, const curve_tw_ed *curve, const m
 }
 
 
+#if !defined(__HIP_DEVICE_COMPILE__)
 job_generator const job_generators[] = {
 		(job_generator) (&tw_ed_random_curve_naive),
 		(job_generator) (&tw_ed_random_curve_gkl2016_j1),
@@ -143,6 +145,7 @@ const char *const job_generators_names[] = {
  * Length of the job_generators function pointer array.
  */
 const int job_generators_len = 3;
+#endif
 
 #ifdef __cplusplus
 }

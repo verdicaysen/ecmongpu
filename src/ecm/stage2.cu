@@ -1,8 +1,9 @@
+#include "hip/hip_runtime.h"
 #include <stdlib.h>
 #include <getopt.h>
 #include <gmp.h>
 #include <ecm/batch.h>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 #include <cudautil.h>
 
 #include "mp/mp.h"
@@ -25,24 +26,24 @@ void stage2_copy_babysteps_to_dev(stage2_global *dst, stage2_global *src) {
 	dst->babysteps.naf_size = (size_t *) malloc(src->babysteps.n * sizeof(size_t));
 	naf_t *baby_devptrs = (naf_t *) malloc(src->babysteps.n * sizeof(naf_t));
 
-	CUDA_SAFE_CALL(cudaMalloc((void **) &dst->babysteps.naf_size, src->babysteps.n * sizeof(size_t)));
-	CUDA_SAFE_CALL(cudaMemcpy(dst->babysteps.naf_size,
+	CUDA_SAFE_CALL(hipMalloc((void **) &dst->babysteps.naf_size, src->babysteps.n * sizeof(size_t)));
+	CUDA_SAFE_CALL(hipMemcpy(dst->babysteps.naf_size,
 							  src->babysteps.naf_size,
 							  src->babysteps.n * sizeof(size_t),
-							  cudaMemcpyHostToDevice));
+							  hipMemcpyHostToDevice));
 	for (size_t i = 0; i < src->babysteps.n; i++) {
-		CUDA_SAFE_CALL(cudaMalloc((void **) &(baby_devptrs[i]), src->babysteps.naf_size[i] * sizeof(naf_limb)));
-		CUDA_SAFE_CALL(cudaMemcpy(baby_devptrs[i],
+		CUDA_SAFE_CALL(hipMalloc((void **) &(baby_devptrs[i]), src->babysteps.naf_size[i] * sizeof(naf_limb)));
+		CUDA_SAFE_CALL(hipMemcpy(baby_devptrs[i],
 								  src->babysteps.naf[i],
 								  src->babysteps.naf_size[i] * sizeof(naf_limb),
-								  cudaMemcpyHostToDevice));
+								  hipMemcpyHostToDevice));
 	}
 
-	CUDA_SAFE_CALL(cudaMalloc((void **) &dst->babysteps.naf, src->babysteps.n * sizeof(naf_t)));
-	CUDA_SAFE_CALL(cudaMemcpy(dst->babysteps.naf,
+	CUDA_SAFE_CALL(hipMalloc((void **) &dst->babysteps.naf, src->babysteps.n * sizeof(naf_t)));
+	CUDA_SAFE_CALL(hipMemcpy(dst->babysteps.naf,
 							  baby_devptrs,
 							  src->babysteps.n * sizeof(naf_t),
-							  cudaMemcpyHostToDevice));
+							  hipMemcpyHostToDevice));
 
 }
 
@@ -138,32 +139,32 @@ void ecm_stage2_init(run_config config) {
 	global_dev.giantsteps_n = config->stage2.global_host->giantsteps_n;
 
 	for (int dev = 0; dev < config->devices; dev++) {
-		cudaSetDevice(dev);
+		hipSetDevice(dev);
 		LOG_INFO("[Device %i] Stage 2 Initialization...", dev);
 
 		/* Copy bitfield */
-		CUDA_SAFE_CALL(cudaMalloc((void **) &global_dev.is_prime,
+		CUDA_SAFE_CALL(hipMalloc((void **) &global_dev.is_prime,
 								  ((combinations + LIMB_BITS - 1) / LIMB_BITS) * sizeof(mp_limb)));
-		CUDA_SAFE_CALL(cudaMemcpy(global_dev.is_prime,
+		CUDA_SAFE_CALL(hipMemcpy(global_dev.is_prime,
 								  config->stage2.global_host->is_prime,
 								  ((combinations + LIMB_BITS - 1) / LIMB_BITS) * sizeof(mp_limb),
-								  cudaMemcpyHostToDevice));
+								  hipMemcpyHostToDevice));
 
 		/* Copy w NAF */
-		CUDA_SAFE_CALL(cudaMalloc((void **) &global_dev.w.naf,
+		CUDA_SAFE_CALL(hipMalloc((void **) &global_dev.w.naf,
 								  config->stage2.global_host->w.naf_size * sizeof(naf_limb)));
-		CUDA_SAFE_CALL(cudaMemcpy(global_dev.w.naf,
+		CUDA_SAFE_CALL(hipMemcpy(global_dev.w.naf,
 								  config->stage2.global_host->w.naf,
 								  config->stage2.global_host->w.naf_size * sizeof(naf_limb),
-								  cudaMemcpyHostToDevice));
+								  hipMemcpyHostToDevice));
 
 
 		stage2_copy_babysteps_to_dev(&global_dev, config->stage2.global_host);
-		CUDA_SAFE_CALL(cudaMalloc((void **) &config->dev_ctx[dev].stage2.global_dev, sizeof(stage2_global)));
-		CUDA_SAFE_CALL(cudaMemcpy(config->dev_ctx[dev].stage2.global_dev,
+		CUDA_SAFE_CALL(hipMalloc((void **) &config->dev_ctx[dev].stage2.global_dev, sizeof(stage2_global)));
+		CUDA_SAFE_CALL(hipMemcpy(config->dev_ctx[dev].stage2.global_dev,
 								  &global_dev,
 								  sizeof(stage2_global),
-								  cudaMemcpyHostToDevice));
+								  hipMemcpyHostToDevice));
 	}
 
 	LOG_DEBUG("Num babysteps %i", config->stage2.global_host->babysteps.n);
@@ -171,23 +172,23 @@ void ecm_stage2_init(run_config config) {
 
 void ecm_stage2_initbatch(run_config config, batch_naf *batch) {
 	for (int dev = 0; dev < config->devices; dev++) {
-		cudaSetDevice(dev);
+		hipSetDevice(dev);
 
 		int offset = dev * config->n_cuda_streams;
 		/* Allocate babysteps memory */
 		for (int stream = 0; stream < config->n_cuda_streams; stream++) {
-			CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **) &batch->host[offset + stream]->babysteps.y,
+			CUDA_SAFE_CALL_NO_SYNC(hipMalloc((void **) &batch->host[offset + stream]->babysteps.y,
 											  config->stage2.global_host->babysteps.n * sizeof(mp_strided_t)));
-			CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **) &batch->host[offset + stream]->babysteps.y_tmp,
+			CUDA_SAFE_CALL_NO_SYNC(hipMalloc((void **) &batch->host[offset + stream]->babysteps.y_tmp,
 											  config->stage2.global_host->babysteps.n * sizeof(mp_strided_t)));
-			CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **) &batch->host[offset + stream]->babysteps.z,
+			CUDA_SAFE_CALL_NO_SYNC(hipMalloc((void **) &batch->host[offset + stream]->babysteps.z,
 											  config->stage2.global_host->babysteps.n * sizeof(mp_strided_t)));
-			CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **) &batch->host[offset + stream]->babysteps.t,
+			CUDA_SAFE_CALL_NO_SYNC(hipMalloc((void **) &batch->host[offset + stream]->babysteps.t,
 											  config->stage2.global_host->babysteps.n * sizeof(mp_strided_t)));
 		}
 
 		size_t mem_free, mem_total;
-		cudaMemGetInfo(&mem_free, &mem_total); // in bytes
+		hipMemGetInfo(&mem_free, &mem_total); // in bytes
 
 		// Use all remaining memory for point buffer in stage 2 (except 100 MB)
 		size_t per_thread = sizeof(mp_strided_t) * 3 * config->n_cuda_streams;
@@ -205,11 +206,11 @@ void ecm_stage2_initbatch(run_config config, batch_naf *batch) {
 		for (int stream = 0; stream < config->n_cuda_streams; stream++) {
 			batch->host[offset + stream]->giantsteps.bufsize = bufsize_giantsteps;
 
-			CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **) &batch->host[offset + stream]->giantsteps.y,
+			CUDA_SAFE_CALL_NO_SYNC(hipMalloc((void **) &batch->host[offset + stream]->giantsteps.y,
 											  bufsize_giantsteps * sizeof(mp_strided_t)));
-			CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **) &batch->host[offset + stream]->giantsteps.z,
+			CUDA_SAFE_CALL_NO_SYNC(hipMalloc((void **) &batch->host[offset + stream]->giantsteps.z,
 											  bufsize_giantsteps * sizeof(mp_strided_t)));
-			CUDA_SAFE_CALL_NO_SYNC(cudaMalloc((void **) &batch->host[offset + stream]->giantsteps.t,
+			CUDA_SAFE_CALL_NO_SYNC(hipMalloc((void **) &batch->host[offset + stream]->giantsteps.t,
 											  bufsize_giantsteps * sizeof(mp_strided_t)));
 
 		}
@@ -235,13 +236,13 @@ void ecm_stage2(run_config config, batch_naf *batch, size_t stream) {
 					batch->host[stream]->giantsteps.y, batch->host[stream]->giantsteps.z, batch->host[stream]->giantsteps.t, batch->host[stream]->giantsteps.bufsize);
 
 	/* Copy batch from device to host */
-	CUDA_SAFE_CALL_NO_SYNC(cudaMemcpyAsync(&batch->host[stream]->job,
+	CUDA_SAFE_CALL_NO_SYNC(hipMemcpyAsync(&batch->host[stream]->job,
 										   &batch->dev[stream]->job,
 										   sizeof(batch_job_data_naf),
-										   cudaMemcpyDeviceToHost,
+										   hipMemcpyDeviceToHost,
 										   config->cuda_streams[stream]));
 
-  	cudaStreamSynchronize(config->cuda_streams[stream]);
+  	hipStreamSynchronize(config->cuda_streams[stream]);
 
 	batch_finished_cb_stage2(batch->host[stream]);
 

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include "config/config.h"
 #include "ecm/factor_task.h"
 #include "ecm/ecm.h"
@@ -156,7 +157,7 @@ void run_config_init(run_config c, gmp_randstate_t gmprand) {
 
 	c->rand = gmprand;
 
-	c->cuda_streams = (cudaStream_t *) malloc(sizeof(cudaStream_t) * c->n_cuda_streams * c->devices);
+	c->cuda_streams = (hipStream_t *) malloc(sizeof(hipStream_t) * c->n_cuda_streams * c->devices);
 	c->host_threads = (pthread_t *) malloc(sizeof(pthread_t) * c->n_cuda_streams * c->devices);
 
 	/* Create context for each device */
@@ -165,9 +166,9 @@ void run_config_init(run_config c, gmp_randstate_t gmprand) {
 		c->dev_ctx[dev].stage1.dev_bound_naf = NULL;
 
 		int offset = c->n_cuda_streams * dev;
-		cudaSetDevice(dev);
+		hipSetDevice(dev);
 		for (int stream = 0; stream < c->n_cuda_streams; stream++) {
-			cudaStreamCreateWithFlags(&c->cuda_streams[offset + stream], cudaStreamNonBlocking);
+			hipStreamCreateWithFlags(&c->cuda_streams[offset + stream], hipStreamNonBlocking);
 		}
 	}
 
@@ -301,14 +302,14 @@ void run_config_read(run_config config, int argc, char** argv){
 void run_config_free(run_config c) {
 	/* Cleanup task */
 	for (int stream = 0; stream < c->n_cuda_streams * c->devices; stream++) {
-		CUDA_SAFE_CALL_NO_SYNC(cudaStreamSynchronize(c->cuda_streams[stream]));
+		CUDA_SAFE_CALL_NO_SYNC(hipStreamSynchronize(c->cuda_streams[stream]));
 		/* Free batch memory */
 		if (c->stage1.host_bound_naf != NULL) {
-			cudaFreeHost(c->stage1.host_bound_naf);
+			hipHostFree(c->stage1.host_bound_naf);
 		} else {
 			LOG_WARNING("Cleaning up uninitialized task.");
 		}
-		cudaStreamDestroy(c->cuda_streams[stream]);
+		hipStreamDestroy(c->cuda_streams[stream]);
 	}
 
 	if (c->stage1.host_bound_naf != NULL) {
